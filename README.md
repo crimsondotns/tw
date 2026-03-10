@@ -1,54 +1,44 @@
-# คู่มือการใช้งาน index.py
+# Nitter Fetch
 
-สคริปต์นี้ใช้สำหรับดึงข้อมูลสถิติและโพสต์ล่าสุดจาก X (Twitter) ทั้งจากบัญชีผู้ใช้ทั่วไปและ Community โดยจะนำข้อมูลไปอัปเดตลงใน Google Spreadsheet อัตโนมัติ
+สคริปต์ Python สำหรับดึงข้อมูลสถิติผู้ใช้งานและโพสต์ล่าสุด (ผ่าน Nitter RSS) จาก Twitter/X แล้วบันทึกลง Google Sheets แบบอัตโนมัติ
 
-## คุณสมบัติหลัก
+## ไฟล์สคริปต์หลัก
 
-1. **ดึงสถิติพื้นฐาน (Stats):** ดึงจำนวน Follower และจำนวนโพสต์ทั้งหมดของบัญชีผู้ใช้ หรือจำนวนสมาชิกของ Community
-2. **ดึงโพสต์ล่าสุด (Recent Posts):** ดึงข้อความย้อนหลังตามจำนวนวันที่กำหนด (ค่าเริ่มต้นคือ 30 วัน)
-3. **ระบบ Google Sheets Integration:** อัปเดตข้อมูลลงใน Spreadsheet โดยอัตโนมัติในคอลัมน์ที่กำหนด
-4. **ระบบ Backoff & Rate Limit:** มีการจัดการ Error และการรอเมื่อติด Rate Limit ของ X API
+1. **`index_profile.py`**: ดึงข้อมูลจำนวนสมาชิกใน Community และสถิติโปรไฟล์ผู้ใช้ (ยอดผู้ติดตาม, ยอดโพสต์) ผ่าน X API แล้วบันทึกผลลงในชีต `Twitter(X) User Stat`
+2. **`index_post.py`**: ดึงโพสต์ล่าสุดจาก Nitter RSS (ค่าเริ่มต้นคือย้อนหลัง 30 วัน) จัดการ Error 429 (Rate Limit) และส่งลิงก์ที่อ่านง่ายกรณีเจอ 404 (Not Found) ข้อมูลจะถูกบันทึกลงในชีต `Migration`
+3. **`common.py`**: ไฟล์ศูนย์รวมฟังก์ชันที่ใช้ร่วมกัน เช่น การยืนยันตัวตน Google Sheets, การตั้งค่า Session X API, ตัวจัดการ Rate Limit และระบบแจ้งเตือนผ่าน Telegram
 
-## สิ่งที่ต้องเตรียม (Prerequisites)
+## ฟีเจอร์เด่น
 
-- **Python 3.x**
-- **Libraries:** `gspread`, `google-auth`, `requests`, `zoneinfo`
-- **Google Service Account:** ต้องมีไฟล์ JSON ของ Service Account และแชร์ Spreadsheet ให้ Email ของ Service Account นั้น
-- **X API Credentials:** ต้องมี Bearer Token หรือ Cookie (หากต้องการดึงข้อมูลที่ละเอียดขึ้น)
+- **เชื่อมต่อ Google Sheets:** อ่านรายชื่อแอคเคาท์ต้นทางและเขียนข้อมูลกลับลงหน้าชีตอัตโนมัติ
+- **แจ้งเตือน Telegram:** ส่งข้อความแจ้งเตือนเข้าแชท Telegram ทันทีเมื่อเจอ Error HTTP 403 (Forbidden) หรือ 404 (Not Found) พร้อมลิงก์ไปยังบัญชี/กลุ่มที่มีปัญหาเพื่อให้กดดูได้ง่าย
+- **รองรับ GitHub Actions:** ตั้งค่าสคริปต์สำหรับรันอัตโนมัติตามตารางเวลาไว้แล้วในโฟลเดอร์ `.github/workflows`
+- **ระบบทนทานต่อ Rate Limit:** มีระบบ Backoff รอเวลาและ Retries อัตโนมัติเมื่อชนลิมิต API
 
-## การตั้งค่า (Configuration)
+## การติดตั้ง
 
-ตั้งค่าผ่าน Environment Variables หรือไฟล์ `.env`:
+1. **ติดตั้ง Library ที่จำเป็น:**
 
-- `X_BEARER`: Bearer Token จาก X Developer Portal
-- `X_COOKIE_STRING`: (ตัวเลือก) Cookie สำหรับ User Auth
-- `X_AUTH_TOKEN` / `X_CT0`: (ตัวเลือก) สำหรับการยืนยันตัวตนแบบ User
-
-**Google Sheets ID:**
-แก้ไข `SPREADSHEET_ID` ในโค้ดให้ตรงกับ ID ของ Google Sheet ที่คุณใช้งาน
-
-## วิธีการใช้งาน
-
-1. ติดตั้ง Dependencies:
    ```bash
-   pip install gspread google-auth requests
-   ```
-2. รันสคริปต์:
-   ```bash
-   python index.py
+   pip install requests gspread google-auth
    ```
 
-## รายละเอียดการทำงานของโค้ด
+2. **ตั้งค่า Environment Variables:** สร้างไฟล์ `.env` พร้อมใส่ค่าเหล่านี้:
 
-- **`get_twitter_user_stats()`**:
-  - อ่านลิงก์จากคอลัมน์ A ใน Sheet "Migration"
-  - ตรวจสอบว่าเป็น User หรือ Community
-  - ดึงข้อมูลแล้วเขียนลงในคอลัมน์ B, C, D
-- **`get_twitter_user_recent_posts(days)`**:
-  - ดึงโพสต์ย้อนหลังตามจำนวนวันที่ระบุ (ใน `__main__` ตั้งไว้ที่ 30 วัน)
-  - เขียนเนื้อหาโพสต์ลงในคอลัมน์ E เป็นต้นไป
+   ```env
+   X_BEARER="your_bearer_token_here"
+   X_COOKIE_STRING="your_cookie_string_here"
+   TELEGRAM_BOT_TOKEN="your_bot_token"
+   TELEGRAM_CHAT_ID="your_chat_id"
+   ```
 
-## หมายเหตุ
+3. **เตรียม Google Service Account:** สร้างไฟล์ `service-account.json` ไว้ในโฟลเดอร์หลัก หรือตั้งค่าผ่านตัวแปร `SERVICE_ACCOUNT`
 
-- สคริปต์รองรับทั้งลิงก์รูปแบบ `https://x.com/username` และ `https://x.com/i/communities/id`
-- มีระบบ Retry อัตโนมัติหากเกิดข้อผิดพลาดในการเชื่อมต่อเครือข่าย
+## วิธีใช้งาน
+
+รันสคริปต์ผ่าน Terminal ได้เลย:
+
+```bash
+python index_profile.py
+python index_post.py
+```
