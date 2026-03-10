@@ -57,6 +57,28 @@ X_CT0 = os.getenv("X_CT0", "")
 PREFER_USER_AUTH_FOR_COMMUNITY = True
 
 # ===============================
+# TELEGRAM NOTIFICATION
+# ===============================
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+
+def send_telegram_notification(message: str):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID or "YOUR_" in TELEGRAM_BOT_TOKEN:
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "HTML"
+    }
+    try:
+        resp = requests.post(url, json=payload, timeout=10)
+        if resp.status_code != 200:
+            log_info(f"Telegram notification failed: status={resp.status_code}")
+    except Exception as e:
+        log_info(f"Telegram notification error: {e!s}")
+
+# ===============================
 # LOGGING UTIL
 # ===============================
 SGT = timezone(timedelta(hours=7))
@@ -185,6 +207,7 @@ def call_x_with_backoff(url, row_idx=None, max_retries=8, base_sleep=2.0, timeou
                 if "x-csrf-token" not in session.headers:
                     if enable_user_auth_on_session():
                         continue
+                send_telegram_notification(f"<b>403 Forbidden</b> (X API)\nURL: {url}\nRow: {row_idx}")
                 return resp
 
             if status == 403 and not have_user_auth() and not guest_refreshed:
@@ -385,6 +408,8 @@ def fetch_nitter_rss_posts(username: str, days: int = 7, row_idx: Optional[int] 
         log_info("", row_idx=row_idx, status_code=colored_status, method="GET", path=path)
         
         if status != 200:
+            if status == 403:
+                send_telegram_notification(f"<b>403 Forbidden</b> (Nitter RSS)\nURL: {url}\nRow: {row_idx}")
             return []
             
         root = ET.fromstring(resp.content)
