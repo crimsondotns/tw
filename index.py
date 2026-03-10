@@ -35,7 +35,7 @@ creds = Credentials.from_service_account_info(SERVICE_ACCOUNT_INFO, scopes=SCOPE
 client = gspread.authorize(creds)
 
 SPREADSHEET_ID = "1xKU6PB6PaPBmq6wHkW6cEM3PDDu6LWzZjlnHJp0Mvqo"
-SHEET_NAME_STATUS = "Copy of Twitter(X) User Stat"
+SHEET_NAME_STATUS = "Twitter(X) User Stat"
 SHEET_NAME_MIGRATION = "Migration"
 
 sheet_status = client.open_by_key(SPREADSHEET_ID).worksheet(SHEET_NAME_STATUS)
