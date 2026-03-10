@@ -52,7 +52,7 @@ client = gspread.authorize(creds)
 
 SPREADSHEET_ID = "1xKU6PB6PaPBmq6wHkW6cEM3PDDu6LWzZjlnHJp0Mvqo"
 SHEET_NAME_STATUS = "Twitter(X) User Stat"
-SHEET_NAME_MIGRATION = "Migration"
+SHEET_NAME_MIGRATION = "Copy of Migration"
 
 sheet_status = client.open_by_key(SPREADSHEET_ID).worksheet(SHEET_NAME_STATUS)
 sheet_migration = client.open_by_key(SPREADSHEET_ID).worksheet(SHEET_NAME_MIGRATION)

@@ -2,6 +2,7 @@ import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple, List
+import re
 import common
 
 def fetch_nitter_rss_posts(username: str, days: int = 7, row_idx: Optional[int] = None) -> Tuple[int, List[Tuple[datetime, str]]]:
@@ -47,13 +48,21 @@ def fetch_nitter_rss_posts(username: str, days: int = 7, row_idx: Optional[int] 
             
             if title is not None and pub_date is not None:
                 content = title.text or ""
+                if content == "Image":
+                    desc = item.find("description")
+                    if desc is not None and desc.text:
+                        m = re.search(r'src="([^"]+)"', desc.text)
+                        if m:
+                            content = m.group(1).replace("&amp;", "&")
+                
                 # Nitter RSS pubDate format: "Sat, 08 Mar 2025 14:14:48 GMT"
                 try:
                     dt = datetime.strptime(pub_date.text, "%a, %d %b %Y %H:%M:%S %Z")
                     dt = dt.replace(tzinfo=timezone.utc)
                     
                     if dt >= cutoff_dt:
-                        posts.append((dt, content))
+                        full_content = f"{content}\n\n{pub_date.text}"
+                        posts.append((dt, full_content))
                 except Exception as e:
                     common.log_info(f"Date parse error: {e!s}", row_idx=row_idx)
                     
