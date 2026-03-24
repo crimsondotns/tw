@@ -9,8 +9,7 @@ import random
 import common
 
 NITTER_INSTANCES = [
-    "nitter.net",
-    "nitter.privacydev.net"
+    "nitter.net"
 ]
 
 def get_nitter_instances() -> List[str]:
