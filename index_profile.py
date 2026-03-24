@@ -67,19 +67,17 @@ def fetch_community_member_count(rest_id: str, row_idx: Optional[int] = None) ->
         common.ENDPOINT_TAG = old_tag
 
 
-def print_custom_log(status: int, ident_label: str):
+def log_http_status(status: int, label: str, context: str = ""):
     if status == 200:
-        common.log_info(f"[INFO]  Successfully fetched profile data for {ident_label}")
+        common.log_success(f"HTTP 200 | Successfully fetched profile", context=context)
     elif status == 403:
-        common.log_info(f"[ERROR] [403] Forbidden access tracking {ident_label}")
+        common.log_error(f"HTTP 403 | Forbidden access", context=context)
     elif status == 404:
-        common.log_info(f"[ERROR] [404] Verification failed tracking {ident_label}")
+        common.log_error(f"HTTP 404 | User not found", context=context)
     elif status == 429:
-        common.log_info(f"[ERROR] [429] Rate limit exceeded tracking {ident_label}")
-    elif 500 <= status < 600:
-        common.log_info(f"[ERROR] [{status}] Internal server error tracking {ident_label}")
+        common.log_warn(f"HTTP 429 | Rate limit exceeded", context=context)
     else:
-        common.log_info(f"[ERROR] [{status}] Verification failed tracking {ident_label}")
+        common.log_error(f"HTTP {status} | Error fetching profile", context=context)
 
 def get_twitter_user_stats():
     overall_start = time.perf_counter()
@@ -125,7 +123,14 @@ def get_twitter_user_stats():
         followers_val = ""
         status = 200
 
+        ctx = f"Row {idx} | @{username}" if not common.is_rest_id(ident) else f"Row {idx} | Community {ident}"
         try:
+            posts_val = ""
+            followers_val = ""
+            status = 200
+            
+            common.log_info(f"Fetching profile...", context=ctx)
+            
             if common.is_rest_id(ident):
                 status, member_count = fetch_community_member_count(ident, row_idx=idx)
                 if status == 200 and member_count >= 0:
@@ -189,23 +194,28 @@ def get_twitter_user_stats():
                 finally:
                     common.ENDPOINT_TAG = old_tag
 
-            print_custom_log(status, f"@{ident}" if not common.is_rest_id(ident) else f"Community {ident}")
+            log_http_status(status, ident, context=ctx)
             
-            if status != 200:
+            if status == 200:
+                consecutive_errors = 0
+                daily_errors[ident] = None
+            else:
                 ts_err = datetime.now(common.SGT).strftime("%Y-%m-%d %H:%M:%S")
                 readable_url = f"https://x.com/{ident}"
                 err_msg = f"HTTP {status} - {readable_url}"
-                if status == 403: err_msg = f"403 Forbidden - {readable_url}"
-                elif status == 404: err_msg = f"404 Not Found - {readable_url}"
-                elif status == 429: err_msg = f"429 Rate Limit - {readable_url}"
                 daily_errors[ident] = {"ts": ts_err, "instance": "X API", "msg": err_msg}
+                if status not in [403, 404]:
+                    consecutive_errors += 1
 
             stats_output = [posts_val, followers_val]
             session_results.append((ident, row_data, stats_output))
+            
+            # Anti-ban delay between accounts
+            time.sleep(random.uniform(1.5, 3.0))
 
         except Exception as e:
-            common.log_info(f"[ERROR] [APP] Exception at row {idx}: {e!s}")
-            print_custom_log(500, ident)
+            common.log_error(f"Exception at row {idx}: {e!s}", context=ctx)
+            log_http_status(500, ident, context=ctx)
             ts_err = datetime.now(common.SGT).strftime("%Y-%m-%d %H:%M:%S")
             daily_errors[ident] = {"ts": ts_err, "instance": "Local", "msg": f"Exception: {e!s}"}
             consecutive_errors += 1
@@ -213,7 +223,7 @@ def get_twitter_user_stats():
 
     processed_count = len(session_results)
     if processed_count > 0:
-        common.log_info("[INFO]  [SYNC] Preparing to overwrite data in User_on_X sheet...")
+        common.log_info(f"[INFO]  [SYNC] Preparing to overwrite data")
         
         all_rows = []
         for ident, cache_row_data, stats in session_results:
@@ -224,7 +234,7 @@ def get_twitter_user_stats():
             try:
                 common.sheet_user_on_x.batch_clear(["A2:H1000"])
                 common.sheet_user_on_x.update(values=all_rows, range_name=f"A2:H{1+len(all_rows)}", value_input_option="RAW")
-                common.log_info(f"[INFO]  [SYNC] Overwrote {len(all_rows)} rows successfully.")
+                common.log_info(f"[INFO]  [SYNC] Overwrote {len(all_rows)} rows successfully")
             except Exception as e:
                 common.log_info(f"[ERROR] [SYNC] Sheet write error: {e!s}")
                 raise
@@ -245,7 +255,10 @@ def get_twitter_user_stats():
                 merged_dict[r[1]] = {"ts": r[0], "instance": r[2], "msg": r[3]}
                 
         for u, err in daily_errors.items():
-            merged_dict[u] = err
+            if err is None:
+                merged_dict.pop(u, None)
+            else:
+                merged_dict[u] = err
             
         error_sheet.clear()
         if merged_dict:
@@ -259,7 +272,7 @@ def get_twitter_user_stats():
         common.log_info(f"[ERROR] [SYNC] Failed to update error.log sheet: {e!s}")
 
     total_min = (time.perf_counter() - overall_start) / 60.0
-    common.log_info(f"[INFO]  [APP] Execution Summary: Processed {processed_count}/{total_accounts} | Duration: {total_min:.2f}m")
+    common.log_info(f"[INFO]  [APP] Execution Summary: Processed {processed_count}/{total_accounts} | Sheet: '{common.SHEET_NAME_USER_ON_X}' | Duration: {total_min:.2f}m")
 
 if __name__ == "__main__":
     get_twitter_user_stats()

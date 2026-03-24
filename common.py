@@ -71,26 +71,36 @@ sheet_user_on_x = client.open_by_key(SPREADSHEET_ID).worksheet(SHEET_NAME_USER_O
 # ==========================================
 # 3. UTILITIES & LOGGING
 # ==========================================
-def log_info(msg: str, **kwargs):
-    ts = datetime.now(SGT).strftime("%Y-%m-%d %H:%M:%S")
-    formatted_ts = f"\033[90m{ts}\033[0m"
+class Logger:
+    ANSI_COLORS = {
+        "INFO":  "\033[36m",   # Cyan
+        "SUCCESS": "\033[32m", # Green
+        "WARN":  "\033[33m",   # Yellow
+        "ERROR": "\033[31m",   # Red
+        "RESET": "\033[0m",
+        "GREY":  "\033[90m",   # Grey
+    }
 
-    # Only colorize errors, warnings, and bypasses to reduce visual noise
-    msg = msg.replace("[WARN]", "\033[93m[WARN]\033[0m")
-    msg = msg.replace("[ERROR]", "\033[91m[ERROR]\033[0m")
-    
-    msg = msg.replace("[AUTH]", "\033[33m[AUTH]\033[0m")
-    msg = msg.replace("[BYPASS]", "\033[90m[BYPASS]\033[0m")
-    
-    msg = re.sub(r'\[(2\d{2})\]', "\033[92m[\\1]\033[0m", msg)
-    msg = re.sub(r'\[(4\d{2})\]', "\033[93m[\\1]\033[0m", msg)
-    msg = re.sub(r'\[(5\d{2})\]', "\033[91m[\\1]\033[0m", msg)
-    
-    msg = re.sub(r'Status (2\d{2})', "Status \033[92m\\1\033[0m", msg)
-    msg = re.sub(r'Status (4\d{2})', "Status \033[93m\\1\033[0m", msg)
-    msg = re.sub(r'Status (5\d{2})', "Status \033[91m\\1\033[0m", msg)
-    
-    print(f"{formatted_ts} {msg}", flush=True)
+    @staticmethod
+    def log(level: str, message: str, context: str = ""):
+        now = datetime.now(SGT)
+        timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
+        ms = int(now.microsecond / 1000)
+        formatted_time = f"{timestamp},{ms:03d}"
+        
+        color = Logger.ANSI_COLORS.get(level, "")
+        reset = Logger.ANSI_COLORS["RESET"]
+        level_padded = f"{level:<8}"
+        
+        ctx_prefix = f"\033[90m{context}\033[0m " if context else ""
+        
+        # Format: Time | LEVEL | context message
+        print(f"{formatted_time} | {color}{level_padded}{reset} | {ctx_prefix}{message}", flush=True)
+
+def log_info(msg, context=""): Logger.log("INFO", msg, context)
+def log_success(msg, context=""): Logger.log("SUCCESS", msg, context)
+def log_warn(msg, context=""): Logger.log("WARN", msg, context)
+def log_error(msg, context=""): Logger.log("ERROR", msg, context)
 
 def send_telegram_notification(message: str):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID or "YOUR_" in TELEGRAM_BOT_TOKEN:

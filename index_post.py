@@ -6,30 +6,12 @@ import random
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple, List, Dict
 import xml.etree.ElementTree as ET
+import re
 import common
 
-def fetch_dynamic_nitter_instances(timeout=10) -> List[str]:
-    url = "https://status.d420.de/api/v1/instances"
-    try:
-        resp = requests.get(url, timeout=timeout)
-        resp.raise_for_status()
-        data = resp.json()
-        working = []
-        for inst in data.get("hosts", []):
-            if inst.get("healthy") and inst.get("rss"):
-                working.append(inst["url"])
-        if working:
-            return working
-    except Exception as e:
-        common.log_info(f"[ERROR] [NET] Failed to fetch dynamic nitter instances: {e!s}")
-    return []
-
-def get_recent_tweets_nitter(username: str, days: int = 30) -> Tuple[int, List[Tuple[str, str]]]:
-    nitter_instances = fetch_dynamic_nitter_instances()
+def get_recent_tweets_nitter(username: str, nitter_instances: List[str], days: int = 30) -> Tuple[int, List[Tuple[str, str]]]:
     if not nitter_instances:
-        nitter_instances = [
-            "https://nitter.net"
-        ]
+        nitter_instances = ["nitter.net"]
     
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
     tweets = []
@@ -39,24 +21,41 @@ def get_recent_tweets_nitter(username: str, days: int = 30) -> Tuple[int, List[T
     status_code = 500
     
     for instance in nitter_instances:
-        url = f"{instance}/{username}/rss"
+        url = f"https://{instance}/{username}/rss"
         try:
-            resp = requests.get(url, timeout=12)
+            resp = common.session.get(url, timeout=15)
             status_code = resp.status_code
             if status_code == 200:
-                root = ET.fromstring(resp.text)
-                for item in root.findall(".//item"):
-                    pubDate_str = item.findtext("pubDate")
-                    desc = item.findtext("description")
-                    if pubDate_str and desc:
+                root = ET.fromstring(resp.content)
+                channel = root.find("channel")
+                if channel is None:
+                    continue
+                    
+                for item in channel.findall("item"):
+                    title = item.find("title")
+                    pub_date = item.find("pubDate")
+                    
+                    if title is not None and pub_date is not None:
+                        content = title.text or ""
+                        if content == "Image":
+                            desc = item.find("description")
+                            if desc is not None and desc.text:
+                                m = re.search(r'src="([^"]+)"', desc.text)
+                                if m:
+                                    content = m.group(1).replace("&amp;", "&")
+                        
                         try:
-                            tweet_date = datetime.strptime(pubDate_str, "%a, %d %b %Y %H:%M:%S %Z").replace(tzinfo=timezone.utc)
-                        except ValueError:
-                            tweet_date = datetime.now(timezone.utc)
-                            
-                        if tweet_date >= cutoff_date:
-                            tweets.append((tweet_date.strftime("%Y-%m-%d"), desc))
+                            dt = datetime.strptime(pub_date.text, "%a, %d %b %Y %H:%M:%S %Z").replace(tzinfo=timezone.utc)
+                            if dt >= cutoff_date:
+                                full_content = f"{content}\n\n{pub_date.text}"
+                                tweets.append((dt.strftime("%Y-%m-%d"), full_content))
+                        except Exception:
+                            continue
+                
+                tweets.sort(key=lambda x: x[0], reverse=True)
                 success = True
+                break
+            elif status_code in [403, 404]:
                 break
         except Exception:
             continue
@@ -66,54 +65,23 @@ def get_recent_tweets_nitter(username: str, days: int = 30) -> Tuple[int, List[T
         
     return 200, tweets
 
-def print_custom_log(status: int, username: str):
+# Redirect old print_custom_log to new logger if needed, but better to call directly
+def log_http_status(status: int, username: str, context: str = ""):
     if status == 200:
-        common.log_info(f"[INFO]  Successfully fetched recent posts for @{username}")
+        common.log_success(f"HTTP 200 | Successfully fetched posts", context=context)
     elif status == 403:
-        common.log_info(f"[ERROR] [403] Forbidden access tracking @{username}")
+        common.log_error(f"HTTP 403 | Forbidden access", context=context)
     elif status == 404:
-        common.log_info(f"[ERROR] [404] Verification failed tracking @{username}")
+        common.log_error(f"HTTP 404 | User not found", context=context)
     elif status == 429:
-        common.log_info(f"[ERROR] [429] Rate limit exceeded tracking @{username}")
-    elif 500 <= status < 600:
-        common.log_info(f"[ERROR] [{status}] Internal server error tracking @{username}")
+        common.log_warn(f"HTTP 429 | Rate limit exceeded", context=context)
     else:
-        common.log_info(f"[ERROR] [{status}] Verification failed tracking @{username}")
-
-def save_progress_state(state_file: str, date_str: str, processed_users: List[str], daily_errors: dict):
-    try:
-        new_state = {
-            "date": date_str,
-            "processed_users": processed_users,
-            "errors": daily_errors
-        }
-        with open(state_file, "w") as f:
-            json.dump(new_state, f)
-        common.log_info(f"[INFO]  [STATE] Saved state to {state_file} ({len(processed_users)} users completed today)")
-    except Exception as e:
-        common.log_info(f"[ERROR] [STATE] Error saving state: {e!s}")
+        common.log_error(f"HTTP {status} | Error fetching posts", context=context)
 
 def get_twitter_user_recent_posts(days: int = 30):
     overall_start = time.perf_counter()
 
-    STATE_FILE = "nitter_progress.json"
-    state = {}
-    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    processed_today: List[str] = []
     daily_errors: Dict[str, dict] = {}
-    
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE, "r") as f:
-                state = json.load(f)
-            if state.get("date") == today_str:
-                processed_today = list(state.get("processed_users", []))
-                daily_errors = dict(state.get("errors", {}))
-                common.log_info(f"[INFO]  [APP] Resume run detected for {today_str}. Skipping {len(processed_today)} users already processed.")
-            else:
-                common.log_info(f"[INFO]  [APP] New day detected ({today_str}). Starting fresh!")
-        except Exception as e:
-            common.log_info(f"[ERROR] [APP] Error loading state: {e!s}")
 
     raw_engagement_data = common.sheet_engagement.get("B4:G")
     engagement_rows = []
@@ -124,7 +92,7 @@ def get_twitter_user_recent_posts(days: int = 30):
     total_accounts = len(engagement_rows)
     common.log_info(f"[INFO]  [APP] Initializing get_twitter_user_recent_posts (Target: {total_accounts} accounts)")
 
-    working_instances = fetch_dynamic_nitter_instances()
+    working_instances = ["nitter.net"]
     common.log_info(f"[INFO]  [NET] Nitter instances active: {len(working_instances)} servers")
 
     session_results: List[Tuple[str, List[str], List[str]]] = []
@@ -152,18 +120,17 @@ def get_twitter_user_recent_posts(days: int = 30):
             common.log_info(f"[WARN]  [BYPASS] Row {idx} skipped: Missing or invalid identifier")
             continue
 
-        if username.lower() in [u.lower() for u in processed_today]:
-            common.log_info(f"[INFO]  [BYPASS] @{username} skipped (Already processed today)")
-            continue
-
+        ctx = f"Row {idx} | @{username}"
         try:
             old_tag = common.ENDPOINT_TAG
             common.ENDPOINT_TAG = "nitter_rss"
             
-            status_nitter, tweets = get_recent_tweets_nitter(username, days=days)
+            common.log_info(f"Fetching posts...", context=ctx)
+            status_nitter, tweets = get_recent_tweets_nitter(username, working_instances, days=days)
             
             if status_nitter != 200:
                 common.ENDPOINT_TAG = username
+                common.log_warn(f"Nitter failed ({status_nitter}), checking X API existence...", context=ctx)
                 variables = {"screen_name": username, "withGrokTranslatedBio": False}
                 features = {"hidden_profile_subscriptions_enabled": True}
                 fieldToggles = {"withAuxiliaryUserLabels": True}
@@ -188,10 +155,11 @@ def get_twitter_user_recent_posts(days: int = 30):
                 except Exception:
                     status_nitter = 500
 
-            print_custom_log(status_nitter, username)
+            log_http_status(status_nitter, username, context=ctx)
             
             if status_nitter == 200:
                 consecutive_errors = 0
+                daily_errors[username] = None 
             else:
                 if status_nitter not in [403, 404]:
                     consecutive_errors += 1
@@ -210,10 +178,13 @@ def get_twitter_user_recent_posts(days: int = 30):
             total_tweets_fetched_this_run += len(texts)
             
             session_results.append((username, row_data, texts))
+            
+            # Anti-ban delay between accounts
+            time.sleep(random.uniform(1.5, 3.0))
 
         except Exception as e:
-            common.log_info(f"[ERROR] [APP] Exception at row {idx}: {e!s}")
-            print_custom_log(500, username)
+            common.log_error(f"Exception at row {idx}: {e!s}", context=ctx)
+            log_http_status(500, username, context=ctx)
             
             ts_err = datetime.now(common.SGT).strftime("%Y-%m-%d %H:%M:%S")
             daily_errors[username] = {"ts": ts_err, "instance": "Local", "msg": f"Exception: {e!s}"}
@@ -222,64 +193,51 @@ def get_twitter_user_recent_posts(days: int = 30):
 
     processed_count = len(session_results)
     if processed_count > 0:
-        common.log_info("[INFO]  [SYNC] Preparing to synchronize data to Migration sheet...")
+        common.log_info(f"[INFO]  [SYNC] Preparing to overwrite data")
         
-        try:
-            target_usernames = common.sheet_migration.col_values(5)
-        except Exception:
-            target_usernames = []
-            
-        target_map = {}
-        max_row = 1
-        for row_idx_0, u_raw in enumerate(target_usernames):
-            if u_raw.strip():
-                u = u_raw.strip().lower()
-                target_map[u] = row_idx_0 + 1
-                max_row = max(max_row, row_idx_0 + 1)
-        
-        next_empty_row = max_row + 1
-
-        clear_ranges = []
-        batch_updates = []
-        successful_users_this_run = []
-        
+        all_rows = []
+        max_tweets = 0
         for username, cache_row_data, texts in session_results:
             if not texts:
-                common.log_info(f"[INFO]  [SYNC] Excluded @{username} (zero new activity)")
-                successful_users_this_run.append(username)
+                # Based on user feedback: if no recent posts, skip writing this account.
                 continue
                 
-            row_idx = target_map.get(username.lower())
-            if not row_idx:
-                row_idx = next_empty_row
-                next_empty_row += 1
-                
-            clear_ranges.append(f"A{row_idx}:ZZ{row_idx}")
+            # Metadata (6 columns) + Tweets (starting at G)
             row_out = cache_row_data + texts
-            
-            batch_updates.append({
-                "range": f"A{row_idx}:ZZ{row_idx}",
-                "values": [row_out]
-            })
-            successful_users_this_run.append(username)
+            all_rows.append(row_out)
+            max_tweets = max(max_tweets, len(texts))
+            total_tweets_fetched_this_run += len(texts)
         
-        if clear_ranges:
+        # Normalize row widths for gspread update
+        full_width = 6 + max_tweets
+        normalized_rows = []
+        for row in all_rows:
+            padding_needed = full_width - len(row)
+            normalized_rows.append(row + [""] * padding_needed)
+
+        if normalized_rows:
             try:
-                common.sheet_migration.batch_clear(clear_ranges)
-                common.log_info(f"[INFO]  [SYNC] Cleared existing content for {len(clear_ranges)} rows.")
-            except Exception as e:
-                common.log_info(f"[ERROR] [SYNC] Sheet clear error: {e!s}")
-        
-        if batch_updates:
-            try:
-                common.sheet_migration.batch_update(batch_updates, value_input_option="RAW")
-                common.log_info(f"[INFO]  [SYNC] Batch update committed: {len(batch_updates)} rows affected.")
+                # Clear columns A to ZZ to ensure a fresh dense output
+                common.sheet_migration.batch_clear(["A2:ZZ500000"])
+                
+                chunk_size = 500
+                total_chunks = (len(normalized_rows) + chunk_size - 1) // chunk_size
+                
+                for i in range(0, len(normalized_rows), chunk_size):
+                    chunk = normalized_rows[i:i+chunk_size]
+                    start_row = i + 2
+                    end_row = start_row + len(chunk) - 1
+                    # A to last column based on full_width
+                    last_col_char = common.gspread.utils.rowcol_to_a1(1, full_width).rstrip("1")
+                    range_name = f"A{start_row}:{last_col_char}{end_row}"
+                    common.sheet_migration.update(values=chunk, range_name=range_name, value_input_option="RAW")
+                    common.log_info(f"[INFO]  [SYNC] Written chunk {i//chunk_size + 1}/{total_chunks} ({len(chunk)} users) to '{common.SHEET_NAME_MIGRATION}'!{range_name}")
+                
+                common.log_info(f"[INFO]  [SYNC] Overwrote {len(normalized_rows)} rows successfully")
             except Exception as e:
                 common.log_info(f"[ERROR] [SYNC] Sheet write error: {e!s}")
+                raise
 
-    processed_today.extend(successful_users_this_run)
-    save_progress_state(STATE_FILE, today_str, processed_today, daily_errors)
-    
     try:
         sh = common.client.open_by_key(common.SPREADSHEET_ID)
         try:
@@ -295,7 +253,10 @@ def get_twitter_user_recent_posts(days: int = 30):
                 merged_dict[r[1]] = {"ts": r[0], "instance": r[2], "msg": r[3]}
                 
         for u, err in daily_errors.items():
-            merged_dict[u] = err
+            if err is None:
+                merged_dict.pop(u, None)
+            else:
+                merged_dict[u] = err
             
         error_sheet.clear()
         if merged_dict:
@@ -309,7 +270,7 @@ def get_twitter_user_recent_posts(days: int = 30):
         common.log_info(f"[ERROR] [SYNC] Failed to update error.log sheet: {e!s}")
 
     total_min = (time.perf_counter() - overall_start) / 60.0
-    common.log_info(f"[INFO]  [APP] Execution Summary: Processed {processed_count}/{total_accounts} | Posts: {total_tweets_fetched_this_run} | Duration: {total_min:.2f}m")
+    common.log_info(f"[INFO]  [APP] Execution Summary: Processed {processed_count}/{total_accounts} | Sheet: '{common.SHEET_NAME_MIGRATION}' | Posts: {total_tweets_fetched_this_run} | Duration: {total_min:.2f}m")
 
 if __name__ == "__main__":
     get_twitter_user_recent_posts()
