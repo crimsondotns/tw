@@ -1,2 +1,4 @@
 .env
 service-account.json
+nitter_progress.json
+__pycache__
