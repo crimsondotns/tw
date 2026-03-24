@@ -60,8 +60,8 @@ creds = Credentials.from_service_account_info(SERVICE_ACCOUNT_INFO, scopes=SCOPE
 client = gspread.authorize(creds)
 
 SPREADSHEET_ID = "1xKU6PB6PaPBmq6wHkW6cEM3PDDu6LWzZjlnHJp0Mvqo"
-SHEET_NAME_MIGRATION = "Copy of Migration"
-SHEET_NAME_ENGAGEMENT = "Copy of Engagement"
+SHEET_NAME_MIGRATION = "Migration"
+SHEET_NAME_ENGAGEMENT = "Engagement"
 SHEET_NAME_USER_ON_X = "User_on_X"
 
 sheet_migration = client.open_by_key(SPREADSHEET_ID).worksheet(SHEET_NAME_MIGRATION)
