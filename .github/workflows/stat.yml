@@ -2,34 +2,27 @@ name: Stats
 
 on:
   schedule:
-    # 00:00 UTC (07:00 Bangkok Time) every day
-    - cron: "0 0 * * *"
-  workflow_dispatch: # Allow manual run
+    - cron: "30 0 * * *" # 00:30 UTC (07:30 Bangkok Time)
+  workflow_dispatch:
 
 jobs:
-  run-script:
+  fetch-stats:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
 
       - name: Install dependencies
-        run: |
-          pip install gspread google-auth requests
+        run: pip install gspread google-auth requests
 
-      - name: Run script
+      - name: Fetch user stats
         env:
           SERVICE_ACCOUNT: ${{ secrets.SERVICE_ACCOUNT }}
           X_BEARER: ${{ secrets.X_BEARER }}
           X_COOKIE_STRING: ${{ secrets.X_COOKIE_STRING }}
           X_AUTH_TOKEN: ${{ secrets.X_AUTH_TOKEN }}
           X_CT0: ${{ secrets.X_CT0 }}
-          X_GUEST_TOKEN: ${{ secrets.X_GUEST_TOKEN }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python stats.py

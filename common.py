@@ -17,7 +17,7 @@ if os.name == "nt":
     os.system("")
 
 # ==========================================
-# 1. ENVIRONMENT & CONFIGURATION
+# 1. SETTINGS & CONFIGURATION
 # ==========================================
 def _load_dotenv():
     """Load .env file into os.environ (simple key=value parser)."""
@@ -34,13 +34,39 @@ def _load_dotenv():
 
 _load_dotenv()
 
-BEARER_TOKEN      = os.getenv("X_BEARER", "")
-X_COOKIE_STRING   = os.getenv("X_COOKIE_STRING", "")
-X_AUTH_TOKEN      = os.getenv("X_AUTH_TOKEN", "")
-X_CT0             = os.getenv("X_CT0", "")
-ENDPOINT_TAG      = "UserByScreenName"
-
+# --- Timezone ---
 SGT = timezone(timedelta(hours=7))
+
+# --- X API Auth ---
+BEARER_TOKEN    = os.getenv("X_BEARER", "")
+X_COOKIE_STRING = os.getenv("X_COOKIE_STRING", "")
+X_AUTH_TOKEN    = os.getenv("X_AUTH_TOKEN", "")
+X_CT0           = os.getenv("X_CT0", "")
+
+# --- X API Endpoints ---
+GRAPHQL_BASE          = "https://api.x.com/graphql"
+GUEST_ACTIVATE_URL    = "https://api.x.com/1.1/guest/activate.json"
+USER_BY_SCREEN_NAME_ID = "ck5KkZ8t5cOmoLssopN99Q"
+COMMUNITY_QUERY_ID     = "uBpODvS60xZ1q2L88d-W2A"
+
+# --- Network ---
+ENDPOINT_TAG           = "UserByScreenName"
+DEFAULT_MAX_RETRIES    = 5
+DEFAULT_BASE_SLEEP     = 2.0
+REQUEST_TIMEOUT        = 10
+_RETRYABLE_SERVER_CODES = frozenset(range(500, 600)) | {408, 409, 425}
+
+# --- Google Sheets ---
+SPREADSHEET_ID         = "1xKU6PB6PaPBmq6wHkW6cEM3PDDu6LWzZjlnHJp0Mvqo"
+SHEET_NAME_MIGRATION   = "Migration"
+SHEET_NAME_ENGAGEMENT  = "Engagement"
+SHEET_NAME_USER_ON_X   = "User_on_X"
+
+# --- Community Query ---
+COMMUNITY_QUERY_FEATURES = {
+    "c9s_list_members_action_api_enabled": False,
+    "c9s_superc9s_indication_enabled": False,
+}
 
 # ==========================================
 # 2. GOOGLE SHEETS SETUP
@@ -58,16 +84,12 @@ def _load_credentials() -> dict:
         "and 'SERVICE_ACCOUNT' env var is empty."
     )
 
-_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-_creds  = Credentials.from_service_account_info(_load_credentials(), scopes=_SCOPES)
-client  = gspread.authorize(_creds)
+_creds       = Credentials.from_service_account_info(
+    _load_credentials(), scopes=["https://www.googleapis.com/auth/spreadsheets"]
+)
+client       = gspread.authorize(_creds)
+_spreadsheet = client.open_by_key(SPREADSHEET_ID)
 
-SPREADSHEET_ID       = "1xKU6PB6PaPBmq6wHkW6cEM3PDDu6LWzZjlnHJp0Mvqo"
-SHEET_NAME_MIGRATION = "Copy of Migration"
-SHEET_NAME_ENGAGEMENT = "Copy of Engagement"
-SHEET_NAME_USER_ON_X = "Copy of User_on_X"
-
-_spreadsheet     = client.open_by_key(SPREADSHEET_ID)
 sheet_migration  = _spreadsheet.worksheet(SHEET_NAME_MIGRATION)
 sheet_engagement = _spreadsheet.worksheet(SHEET_NAME_ENGAGEMENT)
 sheet_user_on_x  = _spreadsheet.worksheet(SHEET_NAME_USER_ON_X)
@@ -77,18 +99,18 @@ sheet_user_on_x  = _spreadsheet.worksheet(SHEET_NAME_USER_ON_X)
 # ==========================================
 class Logger:
     _COLORS = {
-        "INFO":    "\033[36m",   # Cyan
-        "SUCCESS": "\033[32m",   # Green
-        "WARN":    "\033[33m",   # Yellow
-        "ERROR":   "\033[31m",   # Red
+        "INFO":    "\033[36m",
+        "SUCCESS": "\033[32m",
+        "WARN":    "\033[33m",
+        "ERROR":   "\033[31m",
     }
     _RESET = "\033[0m"
     _GREY  = "\033[90m"
 
     @staticmethod
     def log(level: str, message: str, context: str = ""):
-        now = datetime.now(SGT)
-        ts  = f"{now.strftime('%Y-%m-%d %H:%M:%S')},{now.microsecond // 1000:03d}"
+        now   = datetime.now(SGT)
+        ts    = f"{now.strftime('%Y-%m-%d %H:%M:%S')},{now.microsecond // 1000:03d}"
         color = Logger._COLORS.get(level, "")
         ctx   = f"{Logger._GREY}{context}{Logger._RESET} " if context else ""
         print(f"{ts} | {color}{level:<8}{Logger._RESET} | {ctx}{message}", flush=True)
@@ -120,16 +142,16 @@ def is_rest_id(ident: str) -> bool:
 # ==========================================
 session = requests.Session()
 session.headers.update({
-    "Authorization":            BEARER_TOKEN,
-    "Content-Type":             "application/json",
-    "User-Agent":               ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                                 "Chrome/147.0.0.0 Safari/537.36 Edg/147.0.0.0"),
-    "Accept":                   "*/*",
-    "Accept-Language":          "en-US,en;q=0.9,th;q=0.8",
-    "Accept-Encoding":          "gzip, deflate, br, zstd",
+    "Authorization":             BEARER_TOKEN,
+    "Content-Type":              "application/json",
+    "User-Agent":                ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                  "Chrome/147.0.0.0 Safari/537.36 Edg/147.0.0.0"),
+    "Accept":                    "*/*",
+    "Accept-Language":           "en-US,en;q=0.9,th;q=0.8",
+    "Accept-Encoding":           "gzip, deflate, br, zstd",
     "x-twitter-client-language": "en",
-    "x-twitter-active-user":    "yes",
+    "x-twitter-active-user":     "yes",
 })
 
 def _parse_cookie_string(cookie_str: str) -> Dict[str, str]:
@@ -149,7 +171,6 @@ def enable_user_auth_on_session() -> bool:
         cookie_map["auth_token"] = X_AUTH_TOKEN
     if X_CT0:
         cookie_map["ct0"] = X_CT0
-
     if not cookie_map:
         return False
 
@@ -172,11 +193,7 @@ def have_user_auth() -> bool:
 def refresh_guest_token():
     """Activate a new guest token via the X API."""
     log_info("[AUTH] Refreshing guest token from X API...")
-    resp = requests.post(
-        "https://api.x.com/1.1/guest/activate.json",
-        headers={"Authorization": BEARER_TOKEN},
-        timeout=10,
-    )
+    resp = requests.post(GUEST_ACTIVATE_URL, headers={"Authorization": BEARER_TOKEN}, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
     new_token = resp.json().get("guest_token")
     if not new_token:
@@ -197,8 +214,6 @@ else:
 # ==========================================
 # 6. X API NETWORK REQUEST ENGINE
 # ==========================================
-_RETRYABLE_SERVER_CODES = frozenset(range(500, 600)) | {408, 409, 425}
-
 def _compute_rate_limit_sleep(resp: requests.Response, attempt: int,
                                base_sleep: float) -> float:
     """Determine how long to sleep on a 429 response."""
@@ -216,12 +231,12 @@ def _compute_rate_limit_sleep(resp: requests.Response, attempt: int,
             pass
     return min(300, base_sleep * (2 ** (attempt - 1))) + random.uniform(0, 1.0)
 
-def call_x_with_backoff(url: str, *, params=None, max_retries=5,
-                         base_sleep=2.0, row_idx=None) -> requests.Response:
+def call_x_with_backoff(url: str, *, params=None, max_retries=DEFAULT_MAX_RETRIES,
+                         base_sleep=DEFAULT_BASE_SLEEP, row_idx=None) -> requests.Response:
     """GET *url* with exponential back-off, auth-refresh, and rate-limit handling."""
     for attempt in range(1, max_retries + 2):
         try:
-            resp   = session.get(url, params=params, timeout=10)
+            resp   = session.get(url, params=params, timeout=REQUEST_TIMEOUT)
             status = resp.status_code
             ms     = resp.elapsed.total_seconds() * 1000
 
@@ -231,11 +246,9 @@ def call_x_with_backoff(url: str, *, params=None, max_retries=5,
                 f"(Compiled in : \033[90m{ms:.0f}ms\033[0m)"
             )
 
-            # --- Success / client error ---
             if status in (200, 400):
                 return resp
 
-            # --- Auth errors ---
             if status in (401, 403):
                 log_warn(f"[NET] Auth error {status}, attempt {attempt}/{max_retries}")
                 if attempt > max_retries:
@@ -246,11 +259,9 @@ def call_x_with_backoff(url: str, *, params=None, max_retries=5,
                 time.sleep(2)
                 continue
 
-            # --- Not found ---
             if status == 404:
                 return resp
 
-            # --- Rate limit ---
             if status == 429:
                 sleep_s = _compute_rate_limit_sleep(resp, attempt, base_sleep)
                 log_warn(f"[NET] Waiting {sleep_s:.0f}s for rate limit window...")
@@ -259,7 +270,6 @@ def call_x_with_backoff(url: str, *, params=None, max_retries=5,
                     raise RuntimeError("Too many rate limit retries.")
                 continue
 
-            # --- Server errors (retryable) ---
             if attempt <= max_retries and status in _RETRYABLE_SERVER_CODES:
                 sleep_s = min(60, base_sleep * (2 ** (attempt - 1))) + random.uniform(0, 1.0)
                 log_error(f"[NET] Server error {status}, retrying in {sleep_s:.1f}s... ({attempt}/{max_retries})")
@@ -308,29 +318,19 @@ def _deep_find_member_count(obj):
 def fetch_community_member_count(rest_id: str, row_idx: Optional[int] = None) -> Tuple[int, int]:
     """Fetch member_count for a community via X GraphQL CommunityQuery.
 
-    Args:
-        rest_id:  The numeric community ID.
-        row_idx:  Optional sheet row index for logging.
-
     Returns:
         ``(http_status, member_count)``.  *member_count* is ``-1`` on failure.
     """
-    variables = {"communityId": rest_id}
-    features  = {
-        "c9s_list_members_action_api_enabled": False,
-        "c9s_superc9s_indication_enabled": False,
-    }
     url = (
-        "https://api.x.com/graphql/uBpODvS60xZ1q2L88d-W2A/CommunityQuery?"
-        f"variables={requests.utils.quote(json.dumps(variables))}"
-        f"&features={requests.utils.quote(json.dumps(features))}"
+        f"{GRAPHQL_BASE}/{COMMUNITY_QUERY_ID}/CommunityQuery?"
+        f"variables={requests.utils.quote(json.dumps({'communityId': rest_id}))}"
+        f"&features={requests.utils.quote(json.dumps(COMMUNITY_QUERY_FEATURES))}"
     )
 
     global ENDPOINT_TAG
     old_tag = ENDPOINT_TAG
     ENDPOINT_TAG = "CommunityQuery"
     try:
-        # CommunityQuery works with the current session on api.x.com
         try:
             refresh_guest_token()
         except Exception as e:
